@@ -1,5 +1,6 @@
 import { Project, SurveyType } from "@prisma/client";
 import { type JSX, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { TProjectStyling } from "@formbricks/types/project";
 import { TSurveyStyling } from "@formbricks/types/surveys/types";
 import { cn } from "@/lib/cn";
@@ -88,7 +89,7 @@ export const LinkSurveyWrapper = ({
               {isPreview && (
                 <div className="fixed top-0 left-0 flex w-full items-center justify-between bg-slate-600 p-2 px-4 text-center text-sm text-white shadow-sm">
                   <div />
-                  Survey Preview 👀
+                  {t("environments.surveys.survey_preview")}
                   <ResetProgressButton onClick={handleResetSurvey} />
                 </div>
               )}

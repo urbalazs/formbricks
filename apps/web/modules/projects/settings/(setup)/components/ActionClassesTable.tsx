@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslation } from "react-i18next";
 import { type JSX, useState } from "react";
 import { TActionClass } from "@formbricks/types/action-classes";
 import { TEnvironment } from "@formbricks/types/environment";
@@ -56,7 +57,7 @@ export const ActionClassesTable = ({
             ))
           ) : (
             <div className="py-8 text-center">
-              <span className="text-sm text-slate-500">No actions found</span>
+              <span className="text-sm text-slate-500">{t("no_actions_found")}</span>
             </div>
           )}
         </div>

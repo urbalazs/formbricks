@@ -3,6 +3,8 @@ import * as React from "react";
 import { ElementError } from "@/components/general/element-error";
 import { ElementHeader } from "@/components/general/element-header";
 import { cn } from "@/lib/utils";
+import { t as mockT } from "../../../../email/src/lib/mock-translate";
+import { TFunction } from "../../../../email/src/types/translations";
 
 /**
  * Uploaded file information
@@ -229,7 +231,7 @@ function FileUpload({
   imageUrl,
   videoUrl,
   imageAltText,
-  placeholderText = "Click or drag to upload files",
+  placeholderText = t("emails.click_or_drag_to_upload_files"),
 }: Readonly<FileUploadProps>): React.JSX.Element {
   const fileInputRef = React.useRef<HTMLInputElement>(null);
 

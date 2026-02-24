@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import { ArrowUpFromLineIcon } from "lucide-react";
 import React from "react";
 import { TAllowedFileExtension } from "@formbricks/types/storage";
@@ -82,7 +83,7 @@ export const Uploader = ({
       <div className="flex flex-col items-center justify-center pb-6 pt-5">
         <ArrowUpFromLineIcon className="h-6 text-slate-500" />
         <p className={cn("mt-2 text-center text-sm text-slate-500", uploadMore && "text-xs")}>
-          <span className="font-semibold">Click or drag to upload files.</span>
+          <span className="font-semibold">{t("common.upload_input_description")}</span>
         </p>
         <input
           data-testid="upload-file-input"

@@ -58,7 +58,7 @@ export const ActionClassesTable = ({
             ))
           ) : (
             <div className="py-8 text-center">
-              <span className="text-sm text-slate-500">{t("no_actions_found")}</span>
+              <span className="text-sm text-slate-500">{t("common.no_actions_found")}</span>
             </div>
           )}
         </div>

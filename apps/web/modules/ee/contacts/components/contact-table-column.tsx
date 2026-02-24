@@ -1,6 +1,7 @@
 "use client";
 
 import { ColumnDef } from "@tanstack/react-table";
+import { TFunction } from "i18next";
 import { formatAttributeValue } from "@/modules/ee/contacts/lib/format-attribute-value";
 import { getSelectionColumn } from "@/modules/ui/components/data-table";
 import { HighlightedText } from "@/modules/ui/components/highlighted-text";
@@ -10,7 +11,8 @@ import { TContactTableData } from "../types/contact";
 export const generateContactTableColumns = (
   searchValue: string,
   data: TContactTableData[],
-  isReadOnly: boolean
+  isReadOnly: boolean,
+  t: TFunction
 ): ColumnDef<TContactTableData>[] => {
   const userColumn: ColumnDef<TContactTableData> = {
     id: "contactsTableUser",

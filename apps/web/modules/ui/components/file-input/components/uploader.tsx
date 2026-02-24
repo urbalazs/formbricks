@@ -34,6 +34,7 @@ export const Uploader = ({
   disabled = false,
   isStorageConfigured = true,
 }: UploaderProps) => {
+  const { t } = useTranslation();
   return (
     <label // NOSONAR - This is a label for a file input, we need the onClick to trigger storage not configured toast
       htmlFor={`${id}-${name}`}

@@ -25,6 +25,7 @@ export const ActionClassesTable = ({
   otherEnvActionClasses,
   otherEnvironment,
 }: ActionClassesTableProps) => {
+  const { t } = useTranslation();
   const [isActionDetailModalOpen, setIsActionDetailModalOpen] = useState(false);
 
   const [activeActionClass, setActiveActionClass] = useState<TActionClass>();

@@ -45,6 +45,7 @@ export const LinkSurveyWrapper = ({
   isBrandingEnabled,
   dir = "auto",
 }: LinkSurveyWrapperProps) => {
+  const { t } = useTranslation();
   //for embedded survey strip away all surrounding css
   const [isBackgroundLoaded, setIsBackgroundLoaded] = useState(false);
 

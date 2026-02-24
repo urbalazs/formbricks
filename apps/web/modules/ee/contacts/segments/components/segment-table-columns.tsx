@@ -2,10 +2,11 @@
 
 import { ColumnDef } from "@tanstack/react-table";
 import { format, formatDistanceToNow } from "date-fns";
+import { TFunction } from "i18next";
 import { UsersIcon } from "lucide-react";
 import { TSegmentWithSurveyNames } from "@formbricks/types/segment";
 
-export const generateSegmentTableColumns = (): ColumnDef<TSegmentWithSurveyNames>[] => {
+export const generateSegmentTableColumns = (t: TFunction): ColumnDef<TSegmentWithSurveyNames>[] => {
   const titleColumn: ColumnDef<TSegmentWithSurveyNames> = {
     id: "title",
     accessorKey: "title",

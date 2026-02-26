@@ -112,7 +112,6 @@
     "link_expired_description": "Ссылка, которой вы воспользовались, больше не действительна."
   },
   "common": {
-    "Filter": "Фильтр",
     "accepted": "Принято",
     "account": "Аккаунт",
     "account_settings": "Настройки аккаунта",
@@ -207,6 +206,8 @@
     "download": "Скачать",
     "draft": "Черновик",
     "duplicate": "Дублировать",
+    "duplicate_copy": "(копия)",
+    "duplicate_copy_number": "(копия {copyNumber})",
     "e_commerce": "E-Commerce",
     "edit": "Редактировать",
     "email": "Email",

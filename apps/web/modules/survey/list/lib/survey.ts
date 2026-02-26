@@ -16,6 +16,7 @@ import { buildOrderByClause, buildWhereClause } from "@/modules/survey/lib/utils
 import { doesEnvironmentExist } from "@/modules/survey/list/lib/environment";
 import { getProjectWithLanguagesByEnvironmentId } from "@/modules/survey/list/lib/project";
 import { TProjectWithLanguages, TSurvey } from "@/modules/survey/list/types/surveys";
+import { useTranslation } from 'react-i18next';
 
 export const surveySelect: Prisma.SurveySelect = {
   id: true,
@@ -332,12 +333,13 @@ export const copySurveyToOtherEnvironment = async (
 
     const { ...restExistingSurvey } = existingSurvey;
     const hasLanguages = existingSurvey.languages && existingSurvey.languages.length > 0;
+    const { t } = useTranslation();
 
     // Prepare survey data
     const surveyData: Prisma.SurveyCreateInput = {
       ...restExistingSurvey,
       id: createId(),
-      name: `${existingSurvey.name} (copy)`,
+      name: `${existingSurvey.name} ${t("common.duplicate_copy")}`,
       type: existingSurvey.type,
       status: "draft",
       welcomeCard: structuredClone(existingSurvey.welcomeCard),
@@ -400,11 +402,11 @@ export const copySurveyToOtherEnvironment = async (
           if (hasNameConflict) {
             // Find a unique name by appending (copy), (copy 2), (copy 3), etc.
             let copyNumber = 1;
-            let candidateName = `${trigger.actionClass.name} (copy)`;
+            let candidateName = `${trigger.actionClass.name} ${t("common.duplicate_copy")}`;
 
             while (existingActionClassNames.has(candidateName)) {
               copyNumber++;
-              candidateName = `${trigger.actionClass.name} (copy ${copyNumber})`;
+              candidateName = `${trigger.actionClass.name} ${t("common.duplicate_copy_number", { copyNumber })}`;
             }
 
             modifiedName = candidateName;

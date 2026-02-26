@@ -161,7 +161,7 @@ export function ConditionsEditor({
 
     const getConnector = () => {
       if (index > 0) return <div>{connector}</div>;
-      if (parentConditionGroup.conditions.length === 1) return `<div>${t("environments.surveys.edit.when")}</div>`;
+      if (parentConditionGroup.conditions.length === 1) return <div>{t("environments.surveys.edit.when")}</div>;
       return <div />;
     };
 

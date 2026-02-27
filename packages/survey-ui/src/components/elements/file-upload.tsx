@@ -3,8 +3,6 @@ import * as React from "react";
 import { ElementError } from "@/components/general/element-error";
 import { ElementHeader } from "@/components/general/element-header";
 import { cn } from "@/lib/utils";
-import { t as mockT } from "../../../../email/src/lib/mock-translate";
-import { TFunction } from "../../../../email/src/types/translations";
 
 /**
  * Uploaded file information

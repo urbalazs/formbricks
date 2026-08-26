@@ -11,6 +11,7 @@ import { TAllowedFileExtension } from "@formbricks/types/storage";
 import { TUser } from "@formbricks/types/user";
 import { SettingsCard } from "@/app/(app)/workspaces/[workspaceId]/settings/components/SettingsCard";
 import { cn } from "@/lib/cn";
+import { isExternalImageSrc } from "@/lib/image-hosts";
 import { getFormattedErrorMessage } from "@/lib/utils/helper";
 import {
   removeOrganizationEmailLogoUrlAction,
@@ -193,7 +194,7 @@ export const EmailCustomizationSettings = ({
       text: t("common.learn_more"),
       href: isFormbricksCloud
         ? `/organizations/${organization.id}/settings/billing`
-        : "https://formbricks.com/learn-more-self-hosting-license",
+        : "https://formbricks.com/learn-more-self-hosting-license?utm_source=formbricks-app&utm_medium=webapp&utm_campaign=ee_lock_email_whitelabel",
     },
   ];
 
@@ -202,7 +203,7 @@ export const EmailCustomizationSettings = ({
       className="overflow-hidden pb-0"
       title={t("workspace.look.email_customization")}
       description={t("workspace.look.email_customization_description")}
-      noPadding>
+      bodyVariant="bleed">
       <div className="px-6 pt-6">
         {hasWhiteLabelPermission ? (
           <div className="flex items-end justify-between gap-4">
@@ -219,6 +220,7 @@ export const EmailCustomizationSettings = ({
                         className="max-h-24 max-w-full object-contain"
                         width={192}
                         height={192}
+                        unoptimized={isExternalImageSrc(logoUrl)}
                       />
                     </div>
 
@@ -287,6 +289,7 @@ export const EmailCustomizationSettings = ({
                 className="mx-auto max-h-[100px] max-w-full object-contain"
                 width={192}
                 height={192}
+                unoptimized={isExternalImageSrc(logoUrl || fbLogoUrl)}
               />
               <P className="font-bold">
                 {t("workspace.settings.general.email_customization_preview_email_heading", {
@@ -308,7 +311,7 @@ export const EmailCustomizationSettings = ({
         )}
 
         {hasWhiteLabelPermission && isReadOnly && (
-          <Alert variant="warning" className="mt-4 mb-6">
+          <Alert variant="warning" className="mt-4 mb-6" role="status">
             <AlertDescription>
               {t("common.only_owners_managers_and_manage_access_members_can_perform_this_action")}
             </AlertDescription>

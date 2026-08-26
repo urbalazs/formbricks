@@ -2,12 +2,15 @@ import { withSentryConfig } from "@sentry/nextjs";
 import createJiti from "jiti";
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+// Single source of truth for image-optimizer hosts (ENG-1678); shared with the runtime
+// `isExternalImageSrc` check in lib/image-hosts.ts so remotePatterns and the per-<Image>
+// `unoptimized` decision can never drift apart.
+import { LOOPBACK_HOSTS, OPTIMIZABLE_IMAGE_HOSTS } from "./lib/optimizable-image-hosts.mjs";
 
 const jiti = createJiti(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
 jiti("./lib/env");
 
-const LOOPBACK_HOSTS = ["localhost", "127.0.0.1"];
 const LOOPBACK_WILDCARD_ORIGINS = LOOPBACK_HOSTS.map((host) => `http://${host}:*`);
 
 const getLoopbackOriginVariants = (value) => {
@@ -37,9 +40,10 @@ const getLoopbackOriginVariants = (value) => {
 const getUniqueValues = (values) => [...new Set(values.filter(Boolean))];
 
 // NOTE: every `process.env.*` read in this file shapes the build output and MUST be listed in the
-// root turbo.json `build.env` array so Turborepo hashes it into the cache key. Adding a read here
-// without updating turbo.json serves stale cached builds — locally and via the CI remote cache.
-// Enforced by lib/turbo-build-env.test.ts. Read env vars directly (`process.env.<NAME>` or
+// `build.env` array of apps/web/turbo.json — the web build's own task config since ENG-1682, not the
+// root turbo.json — so Turborepo hashes it into the cache key. Adding a read here without updating
+// that file serves stale cached builds — from the local Turbo cache and the CI build-output cache
+// alike. Enforced by lib/turbo-build-env.test.ts. Read env vars directly (`process.env.<NAME>` or
 // `process.env["<NAME>"]`), not via destructuring, so that guardrail can detect them.
 /** @type {import('next').NextConfig} */
 
@@ -89,7 +93,7 @@ const nextConfig = {
   experimental: {
     proxyClientMaxBodySize: "16mb",
   },
-  transpilePackages: ["@formbricks/database"],
+  transpilePackages: ["@formbricks/database", "@formbricks/workflows"],
   images: {
     // Optimize image processing to reduce CPU time and prevent timeouts
     deviceSizes: [640, 750, 828, 1080, 1200, 1920], // Removed 3840 to avoid processing huge images
@@ -97,40 +101,15 @@ const nextConfig = {
     formats: ["image/webp"], // WebP is faster to process and smaller than JPEG/PNG
     minimumCacheTTL: 60, // Cache optimized images for at least 60 seconds
     dangerouslyAllowSVG: true, // Allow SVG images
-    remotePatterns: [
-      {
-        protocol: "https",
-        hostname: "avatars.githubusercontent.com",
-      },
-      {
-        protocol: "https",
-        hostname: "avatars.slack-edge.com",
-      },
-      {
-        protocol: "https",
-        hostname: "lh3.googleusercontent.com",
-      },
-      {
-        protocol: "http",
-        hostname: "localhost",
-      },
-      {
-        protocol: "http",
-        hostname: "127.0.0.1",
-      },
-      {
-        protocol: "https",
-        hostname: "app.formbricks.com",
-      },
-      {
-        protocol: "https",
-        hostname: "formbricks-cdn.s3.eu-central-1.amazonaws.com",
-      },
-      {
-        protocol: "https",
-        hostname: "images.unsplash.com",
-      },
-    ],
+    // Only universal provider/CDN hosts are optimized (ENG-1678). Same-origin `/storage/...` uploads
+    // are relative paths (local images, always optimized) and need no entry; the deployment's own
+    // domain is intentionally NOT listed since the same build serves every domain. Arbitrary
+    // user-provided external URLs are rendered `unoptimized` (see lib/image-hosts.ts) instead of
+    // being allowlisted, so the optimizer never acts as an open proxy.
+    remotePatterns: OPTIMIZABLE_IMAGE_HOSTS.map((hostname) => ({
+      protocol: LOOPBACK_HOSTS.includes(hostname) ? "http" : "https",
+      hostname,
+    })),
   },
   async redirects() {
     return [
@@ -491,16 +470,27 @@ if (process.env.WEBAPP_URL) {
   };
 }
 
-// Allow all origins for next/image
-nextConfig.images.remotePatterns.push({
-  protocol: "https",
-  hostname: "**",
-});
+// Build-time release identifier, derived exactly the way the runtime `SENTRY_RELEASE` is
+// derived in lib/constants.ts. CI bumps apps/web/package.json to the release version before
+// the image build (.github/actions/build-and-push-docker/action.yml), so the release the
+// artifacts are uploaded under and the release the events are tagged with always agree.
+// It doubles as the "is this an official release build?" signal below: only CI bumps this
+// file, so an unbumped 0.0.0 means a local or self-hosted build.
+const sentryRelease = (() => {
+  try {
+    const { version } = require("./package.json");
+    return version && version !== "0.0.0" ? `${version}` : undefined;
+  } catch {
+    return undefined;
+  }
+})();
 
 const sentryOptions = {
   // For all available options, see:
   // https://www.npmjs.com/package/@sentry/webpack-plugin#options
-  project: "formbricks-cloud",
+  // Production ingests into formbricks/formbricks (EU). "formbricks-cloud" lives in a
+  // different org (formbricks-us), so uploads were rejected with "projects are invalid".
+  project: "formbricks",
   org: "formbricks",
 
   // Enable logging to debug sourcemap generation issues
@@ -511,6 +501,34 @@ const sentryOptions = {
 
   // Automatically tree-shake Sentry logger statements to reduce bundle size
   disableLogger: false,
+
+  sourcemaps: {
+    // The SDK documents this as defaulting to true, but it only applies that default on the
+    // same path that turns `productionBrowserSourceMaps` on for you — and line 57 already
+    // sets that explicitly, so the SDK bails out first. Without this the generated .map
+    // files stay in the image and are served publicly.
+    deleteSourcemapsAfterUpload: true,
+
+    // Only an official release build uploads. A local or self-hosted build carries 0.0.0, and
+    // its token either has no access to this org (so the upload fails) or does (so a laptop
+    // would create a git-SHA release in our production project). "disable-upload" skips the
+    // upload while still injecting Debug IDs — `true` would skip those too, which would leave
+    // the image unsymbolicatable and defeat the point of the read-secrets.sh change. The
+    // string is honoured by the underlying bundler plugin; @sentry/nextjs types the field as
+    // boolean, so re-verify this if the SDK is upgraded.
+    disable: sentryRelease ? false : "disable-upload",
+  },
+
+  release: { name: sentryRelease },
+
+  // The plugin's default is to log an upload failure and leave the build green, which is why
+  // a wrong project slug went unnoticed for two years. On a release build, fail instead: an
+  // image whose source maps never uploaded produces unreadable production stack traces.
+  errorHandler: sentryRelease
+    ? (err) => {
+        throw err;
+      }
+    : undefined,
 };
 
 // Always enable Sentry plugin to inject Debug IDs

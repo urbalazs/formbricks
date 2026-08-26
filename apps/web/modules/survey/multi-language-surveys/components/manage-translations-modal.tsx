@@ -109,7 +109,6 @@ export const ManageTranslationsModal = ({
       if (!aEmpty && bEmpty) return 1;
       return 0;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [strings, missingFirst]);
 
   // Merge draft translations into localSurvey so that the recall dropdown
@@ -220,7 +219,7 @@ export const ManageTranslationsModal = ({
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
-      <DialogContent width="wide" className="max-h-[85dvh]">
+      <DialogContent width="wide" className="max-h-[85dvh]" disableCloseOnOutsideClick>
         <DialogHeader>
           <DialogTitle>{t("workspace.surveys.edit.manage_translations")}</DialogTitle>
           <div className="mt-2 flex items-center justify-between">

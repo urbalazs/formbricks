@@ -10,13 +10,16 @@ import { prisma } from "@formbricks/database";
 import { logger } from "@formbricks/logger";
 import type { TUserLocale } from "@formbricks/types/user";
 import {
+  EMAIL_AUTH_ENABLED,
   EMAIL_VERIFICATION_DISABLED,
+  PASSWORD_RESET_DISABLED,
   PASSWORD_RESET_TOKEN_LIFETIME_MINUTES,
   RATE_LIMITING_DISABLED,
   SESSION_MAX_AGE,
 } from "@/lib/constants";
 import { hashSecret, verifySecret } from "@/lib/crypto";
 import { env } from "@/lib/env";
+import { BETTER_AUTH_IP_ADDRESS_CONFIG } from "@/lib/utils/client-ip";
 import {
   accountDeletionConfig,
   requireDeletionConfirmationBeforeHandler,
@@ -29,16 +32,24 @@ import { rejectInactiveUserOnSessionCreate } from "./better-auth-active-user-gat
 import { createBrevoCustomerAfterEmailVerification } from "./better-auth-email-verification";
 import { hibpBreachCheckBeforeHandler } from "./better-auth-hibp";
 import { auditPasswordReset, betterAuthLogger, signInAuditDatabaseHook } from "./better-auth-observability";
+import { requirePasswordResetEnabledBeforeHandler } from "./better-auth-password-reset-gate";
 import { getMcpOauthProviderOptions } from "./mcp-oauth-provider-options";
 import { getAuthIssuerUrl, getMcpResourceUrl } from "./oauth-urls";
 import { redisSecondaryStorage } from "./secondary-storage";
+import { signupPolicyBeforeHandler } from "./signup-policy";
 
 const DAY_IN_SECONDS = 60 * 60 * 24;
 
 // `__Secure-`/Secure cookies require HTTPS — on http://localhost the browser drops them and the
 // session can't persist. Gate on the configured URL scheme (parity with NextAuth's URL-based
 // useSecureCookies default) instead of hardcoding true, so local/dev over http works.
-const USE_SECURE_COOKIES = (env.BETTER_AUTH_URL ?? env.NEXTAUTH_URL ?? "").startsWith("https://");
+//
+// WEBAPP_URL is part of the chain because all three vars are optional: a deployment that sets only
+// WEBAPP_URL=https://… — the primary documented variable — would otherwise fall through to "" and
+// serve the session cookie without `Secure`, letting a downgrade to plaintext HTTP leak it.
+const USE_SECURE_COOKIES = (env.BETTER_AUTH_URL ?? env.NEXTAUTH_URL ?? env.WEBAPP_URL ?? "").startsWith(
+  "https://"
+);
 
 /** Resolve a user's locale for transactional emails (Better Auth's callback user omits it). */
 export const getUserLocale = async (userId: string): Promise<TUserLocale> => {
@@ -90,7 +101,12 @@ export const auth = betterAuth({
   socialProviders: ssoSocialProviders,
 
   emailAndPassword: {
-    enabled: true,
+    // EMAIL_AUTH_DISABLED=1 has to switch the credential endpoints off here, not just hide the form on
+    // the login/signup pages (its only other use). Hardcoding `true` left
+    // POST /api/auth/sign-in/email live on an instance the operator had configured as SSO-only, so any
+    // account that still carried a password could sign in around the IdP — and around whatever the IdP
+    // enforces, such as MFA, conditional access, or deprovisioning.
+    enabled: EMAIL_AUTH_ENABLED,
     // Matches ZUserPassword (min 8 / max 128); the upper+digit composition rule stays enforced
     // by ZUserPassword at the app layer (deferred policy modernization → design doc §10.6).
     minPasswordLength: 8,
@@ -108,12 +124,20 @@ export const auth = betterAuth({
     // app-wide static import chain (only loaded when a reset is actually sent).
     sendResetPassword: async ({ user, url }) => {
       const { sendPasswordResetLinkEmail } = await import("@/modules/email");
-      await sendPasswordResetLinkEmail({
+      // Same falsy-return trap as sendVerificationEmail below (ENG-2091): `sendEmail` returns false
+      // without throwing when SMTP isn't configured, and Better Auth ignores the return value — so a
+      // reset that never went out would leave no trace at all. Throwing makes it attributable; the
+      // caller (forgot-password/actions.ts) already catches and still answers generically, so the
+      // enumeration-safe response is unchanged.
+      const sent = await sendPasswordResetLinkEmail({
         email: user.email,
         locale: await getUserLocale(user.id),
         verifyLink: url,
         linkValidityInMinutes: PASSWORD_RESET_TOKEN_LIFETIME_MINUTES,
       });
+      if (!sent) {
+        throw new Error("Password reset email was not sent (mailer reported no delivery)");
+      }
     },
     // After a successful reset, send the security notification (parity with the retired
     // completePasswordReset) and audit it. Better Auth already revoked sessions
@@ -145,13 +169,37 @@ export const auth = betterAuth({
     // before ownership is proven; also enumeration-safe).
     autoSignInAfterVerification: true,
     expiresIn: 60 * 60, // 1 hour
+    // ENG-2091: a failed send must never present as a successful one. Two ways it can hide:
+    //  1. a THROW — on the sign-up path Better Auth calls this through `runInBackgroundOrAwait`, whose
+    //     catch only logs, so sign-up still resolves 200. (The resend endpoint awaits it directly and
+    //     does propagate, which is why rethrowing below is what makes THAT path truthful.)
+    //  2. a FALSY RETURN — `sendEmail` returns false without throwing when SMTP isn't configured, and
+    //     Better Auth ignores the return value entirely. Silent on every path.
+    // So: treat both as failures and make them attributable — log with the user id, and rethrow so the
+    // paths that DO propagate (resend, sign-in resend) fail loudly instead of claiming success.
+    // Deliberately NOT surfaced in the sign-up response: that response must not vary by what happened to
+    // one address, or it becomes an account-existence oracle (ENG-2099). The verification-requested
+    // screen derives its "nothing was sent" state from IS_SMTP_CONFIGURED instead.
     sendVerificationEmail: async ({ user, url }) => {
       const { sendVerificationLinkEmail } = await import("@/modules/email");
-      await sendVerificationLinkEmail({
-        email: user.email,
-        locale: await getUserLocale(user.id),
-        verifyLink: url,
-      });
+      try {
+        const sent = await sendVerificationLinkEmail({
+          email: user.email,
+          locale: await getUserLocale(user.id),
+          verifyLink: url,
+        });
+        if (!sent) {
+          throw new Error("Verification email was not sent (mailer reported no delivery)");
+        }
+      } catch (error) {
+        // Domain only — never the address, the token, or the verify URL (all three are sensitive and
+        // the URL grants account access).
+        logger.error(
+          { error, userId: user.id, emailDomain: user.email.split("@")[1] },
+          "Failed to send verification email"
+        );
+        throw error;
+      }
     },
     // Re-home the "token" provider's Brevo-on-first-verification side effect (better-auth-email-verification.ts).
     afterEmailVerification: createBrevoCustomerAfterEmailVerification,
@@ -237,6 +285,16 @@ export const auth = betterAuth({
     before: createAuthMiddleware(async (ctx) => {
       await ssoLicenseGateBeforeHandler(ctx);
       await requireDeletionConfirmationBeforeHandler(ctx);
+      // ENG-2105: reject password-reset requests at the native Better Auth layer when the operator
+      // has disabled password resets (PASSWORD_RESET_DISABLED=1). See better-auth-password-reset-gate.ts.
+      await requirePasswordResetEnabledBeforeHandler(ctx, PASSWORD_RESET_DISABLED);
+      // ENG-2293: enforce the closed-sign-up policy on Better Auth's native /sign-up/email, which is
+      // served beside createUserAction and used to bypass it entirely. Runs BEFORE the endpoint so the
+      // rejection can't double as an account-existence oracle (the handler looks the address up first,
+      // and an address that already has one never reaches a create hook). See signup-policy.ts.
+      // Ordered ahead of the breach check so a sign-up on a closed instance costs no outbound HIBP call.
+      // Path-disjoint from the reset gate above, so their relative order is not load-bearing.
+      await signupPolicyBeforeHandler(ctx);
       // ENG-1587: reject known-breached passwords on set (signup / reset) BEFORE the endpoint runs, so
       // the reset token isn't consumed on a rejection. Fails open when api.pwnedpasswords.com is
       // unreachable and honors PASSWORD_HIBP_CHECK_DISABLED. See better-auth-hibp.ts.
@@ -281,7 +339,9 @@ export const auth = betterAuth({
     // write path) would reject BA-created users at cutover — caught by the SSO-provisioning test.
     database: { generateId: () => createId() },
     defaultCookieAttributes: { sameSite: "lax", httpOnly: true, secure: USE_SECURE_COOKIES, path: "/" },
-    ipAddress: { ipAddressHeaders: ["x-forwarded-for"] }, // pin to the trusted proxy header
+    // Proxy has already selected the configured trusted hop. Do not re-parse forwarding chains or add
+    // Better Auth trustedProxies here; the private single-value header is the canonical identity.
+    ipAddress: BETTER_AUTH_IP_ADDRESS_CONFIG,
   },
 
   // Route Better Auth's logs to @formbricks/logger and capture errors to Sentry (Phase 7 parity).

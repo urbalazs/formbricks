@@ -16,7 +16,9 @@ required:
   - publishOn
   - createdAt
   - updatedAt
+  - archivedAt
   - responseCount
+  - completedResponseCount
   - creator
 properties:
   id:
@@ -45,18 +47,29 @@ properties:
   updatedAt:
     type: string
     format: date-time
+  archivedAt:
+    type:
+      - string
+      - "null"
+    format: date-time
+    description: >-
+      Soft-delete/archive marker (ISO 8601); `null` when the survey is active.
   publishOn:
     type:
       - string
-      - 'null'
+      - "null"
     format: date-time
     description: Scheduled publish time (ISO 8601), or null if not scheduled.
   responseCount:
     type: integer
+    description: Number of responses, including partial ones.
+  completedResponseCount:
+    type: integer
+    description: Number of responses the respondent finished.
   creator:
     type:
       - object
-      - 'null'
+      - "null"
     description: The user who created the survey, or null for API-key/system-created surveys.
     required:
       - name

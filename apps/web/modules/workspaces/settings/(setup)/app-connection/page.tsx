@@ -23,7 +23,8 @@ export const AppConnectionPage = async ({ params }: { params: Promise<{ workspac
 
   const { workspace, session } = await getWorkspaceAuth(workspaceId);
   const showAIPrompt = session?.user.id
-    ? (await getPostHogFeatureFlag(session.user.id, "a-b_app-connection_ai-prompt")) === "test"
+    ? (await getPostHogFeatureFlag(session.user.id, "a-b_app-connection_ai-prompt", { workspaceId })) ===
+      "test"
     : false;
 
   const aiPrompt = `Integrate Formbricks into my app. 
@@ -196,7 +197,7 @@ var t=document.createElement("script");t.type="text/javascript",t.async=!0,t.src
             )}
             <IdBadge id={WEBAPP_URL} label={t("workspace.app-connection.webapp_url")} />
             {workspace.legacyEnvironmentId && (
-              <Alert variant="info" size="small">
+              <Alert variant="info" size="small" role="status">
                 <AlertDescription>
                   <p>
                     {t("workspace.app-connection.environment_id_legacy_alert")}{" "}
@@ -227,14 +228,14 @@ var t=document.createElement("script");t.type="text/javascript",t.async=!0,t.src
             <div className="space-y-4">
               <WidgetStatusIndicator workspace={workspace} />
               {workspace.appSetupCompleted ? (
-                <Alert variant="warning">
+                <Alert variant="warning" role="status">
                   <AlertTitle>{t("workspace.app-connection.cache_update_delay_title")}</AlertTitle>
                   <AlertDescription>
                     {t("workspace.app-connection.cache_update_delay_description")}
                   </AlertDescription>
                 </Alert>
               ) : (
-                <Alert variant="info">
+                <Alert variant="info" role="status">
                   <AlertTitle>{t("workspace.app-connection.setup_alert_title")}</AlertTitle>
                   <AlertDescription>{t("workspace.app-connection.setup_alert_description")}</AlertDescription>
                   <AlertButton asChild>

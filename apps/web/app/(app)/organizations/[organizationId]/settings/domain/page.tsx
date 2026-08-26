@@ -42,7 +42,7 @@ const Page = async (props: Readonly<{ params: Promise<{ organizationId: string }
 
       {!IS_STORAGE_CONFIGURED && (
         <div className="max-w-4xl">
-          <Alert variant="warning">
+          <Alert variant="warning" role="status">
             <AlertDescription>{t("common.storage_not_configured")}</AlertDescription>
           </Alert>
         </div>
@@ -58,7 +58,8 @@ const Page = async (props: Readonly<{ params: Promise<{ organizationId: string }
 
       <SettingsCard
         title={t("workspace.settings.domain.title")}
-        description={t("workspace.settings.domain.description")}>
+        description={t("workspace.settings.domain.description")}
+        bodyVariant="flush">
         <PrettyUrlsTable surveys={surveys} />
       </SettingsCard>
     </PageContentWrapper>

@@ -184,13 +184,17 @@ const expandMatrixToRecords = (
 ): FeedbackRecordCreateParams[] => {
   if (!value || typeof value !== "object" || Array.isArray(value)) return [];
 
+  // Guard against malformed/legacy blocks where rows is absent (same class as ENG-1939): the
+  // schema requires it, but stored survey.blocks JSON is not re-validated here. columns flows
+  // through normalizeChoiceValue below, which already tolerates an absent array.
+  const rows = element.rows ?? [];
   const groupLabel = mapping.customFieldLabel || getHeadlineFromElement(element);
   const records: FeedbackRecordCreateParams[] = [];
 
   for (const [rowLabel, columnLabel] of Object.entries(value)) {
     if (columnLabel === undefined || columnLabel === null || columnLabel === "") continue;
 
-    const row = findChoiceByLabel<TSurveyMatrixElementChoice>(element.rows, rowLabel, lookupLanguage);
+    const row = findChoiceByLabel<TSurveyMatrixElementChoice>(rows, rowLabel, lookupLanguage);
     if (!row) continue;
 
     // Column labels are localized like the row labels — store the label as submitted and
@@ -227,13 +231,16 @@ const expandRankingToRecords = (
 ): FeedbackRecordCreateParams[] => {
   if (!Array.isArray(value) || value.length === 0) return [];
 
+  // Guard against malformed/legacy blocks where choices is absent (same class as ENG-1939): the
+  // schema requires it, but stored survey.blocks JSON is not re-validated here.
+  const choices = element.choices ?? [];
   const groupLabel = mapping.customFieldLabel || getHeadlineFromElement(element);
   const records: FeedbackRecordCreateParams[] = [];
 
   value.forEach((itemLabel, index) => {
     if (typeof itemLabel !== "string" || itemLabel === "") return;
 
-    const choice = findChoiceByLabel<TSurveyElementChoice>(element.choices, itemLabel, lookupLanguage);
+    const choice = findChoiceByLabel<TSurveyElementChoice>(choices, itemLabel, lookupLanguage);
     if (!choice) return;
 
     records.push({
@@ -324,12 +331,16 @@ const normalizeElementValue = (
       element.type === TSurveyElementTypeEnum.MultipleChoiceMulti);
   if (!isChoiceElement) return { value };
 
-  const normalized = normalizeChoiceValue(element.choices, value, lookupLanguage);
+  // Elements come from stored survey.blocks JSON that is not re-validated here, so choices may be
+  // absent at runtime even though the schema requires it (min(2)). Fall back like the siblings
+  // (normalizeChoiceValue, expandMultiChoiceToRecords) instead of dereferencing it raw.
+  const choices = element.choices ?? [];
+  const normalized = normalizeChoiceValue(choices, value, lookupLanguage);
 
   if (
     !normalized.valueId &&
     typeof value === "string" &&
-    (element.otherOptionPlaceholder !== undefined || element.choices.some((c) => c.id === "other"))
+    (element.otherOptionPlaceholder !== undefined || choices.some((c) => c.id === "other"))
   ) {
     normalized.valueId = "other";
   }
@@ -369,19 +380,30 @@ export function transformResponseToFeedbackRecords(
 
     const element = elementMap.get(mapping.elementId);
 
-    if (element?.type === TSurveyElementTypeEnum.Matrix) {
+    // ENG-2064: a mapping whose element is gone from the survey must not publish. Every branch below
+    // tolerates `element === undefined` — the type checks are optional-chained and the generic path
+    // falls through to `getHeadlineFromElement(undefined)` — so without this the row published a
+    // record labelled "Untitled" against a question that no longer exists, and
+    // `importHistoricalResponses` replayed every historical response through the same loop.
+    //
+    // This is also what makes reconciliation's hold-back honest: `resolveDeletions` keeps orphaned
+    // rows when removing them would leave a survey with none, on the stated grounds that they are
+    // inert. They were not inert until this guard existed.
+    if (!element) continue;
+
+    if (element.type === TSurveyElementTypeEnum.Matrix) {
       feedbackRecords.push(...expandMatrixToRecords(element, mapping, value, baseFields, lookupLanguage));
       continue;
     }
 
-    if (element?.type === TSurveyElementTypeEnum.Ranking) {
+    if (element.type === TSurveyElementTypeEnum.Ranking) {
       feedbackRecords.push(...expandRankingToRecords(element, mapping, value, baseFields, lookupLanguage));
       continue;
     }
 
     // Multi-select splits into one record per selected option so each keeps its own stable
     // value_id (ENG-1702). A single string answer falls through to the generic path below.
-    if (element?.type === TSurveyElementTypeEnum.MultipleChoiceMulti && Array.isArray(value)) {
+    if (element.type === TSurveyElementTypeEnum.MultipleChoiceMulti && Array.isArray(value)) {
       feedbackRecords.push(
         ...expandMultiChoiceToRecords(element, mapping, value, baseFields, lookupLanguage)
       );

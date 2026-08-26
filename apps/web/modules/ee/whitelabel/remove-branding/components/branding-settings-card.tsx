@@ -69,10 +69,10 @@ export const BrandingSettingsCard = async ({
     <SettingsCard
       title={t("workspace.look.formbricks_branding")}
       description={t("workspace.look.formbricks_branding_settings_description")}
-      noPadding={showLiteLicenseTip}>
+      bodyVariant={showLiteLicenseTip ? "bleed" : "padded"}>
       {brandingContent}
       {isReadOnly && (
-        <Alert variant="warning" className="mt-4">
+        <Alert variant="warning" className="mt-4" role="status">
           <AlertDescription>
             {t("common.only_owners_managers_and_manage_access_members_can_perform_this_action")}
           </AlertDescription>

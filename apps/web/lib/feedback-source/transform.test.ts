@@ -370,6 +370,32 @@ describe("transformResponseToFeedbackRecords", () => {
       expect(result[0].value_text).toBe("single-choice");
     });
 
+    // ENG-1939: stored survey.blocks JSON is not re-validated on this path, so a choice element
+    // can arrive with choices absent even though the schema requires min(2). A single string
+    // answer routes through normalizeElementValue; with no choices and no otherOptionPlaceholder
+    // it must fall through, not throw on choices.some(...). Covers both types because a
+    // multipleChoiceMulti with a non-array value falls through the same as multipleChoiceSingle.
+    test.each(["multipleChoiceSingle", "multipleChoiceMulti"] as const)(
+      "does not crash when a %s element has no choices array (unmatched free-text answer)",
+      (type) => {
+        const surveyNoChoices = {
+          ...mockSurvey,
+          blocks: [{ elements: [{ id: "el-choice", type, headline: { default: "Pick one" } }] }],
+        } as unknown as TSurvey;
+        const response = {
+          ...mockResponse,
+          data: { "el-choice": "free text answer" },
+        } as unknown as TResponse;
+        const mappings = [createMapping({ elementId: "el-choice", hubFieldType: "categorical" })];
+
+        const result = transformResponseToFeedbackRecords(response, surveyNoChoices, mappings, mockTenantId);
+
+        expect(result).toHaveLength(1);
+        expect(result[0].value_text).toBe("free text answer");
+        expect(result[0].value_id).toBeUndefined();
+      }
+    );
+
     test("JSON-stringifies object value for categorical field (matrix/ranking responses)", () => {
       const response = {
         ...mockResponse,
@@ -382,28 +408,62 @@ describe("transformResponseToFeedbackRecords", () => {
     });
 
     test("joins array values to comma-separated text for non-choice elements", () => {
-      // An element absent from the survey definition has no type, so the generic path stores the
-      // raw array joined. The per-option split only applies to multipleChoiceMulti elements.
+      // `el-text` is a real openText element: the generic path stores the raw array joined, because
+      // the per-option split only applies to multipleChoiceMulti. This used to use an element absent
+      // from the survey to reach the same path, which stopped working once the transform started
+      // skipping mappings whose element is gone (ENG-2064) — and that fixture was asserting the
+      // orphan-publishing behaviour that guard exists to remove.
       const response = {
         ...mockResponse,
-        data: { "el-array": ["LabelA", "LabelB", "LabelC"] },
+        data: { "el-text": ["LabelA", "LabelB", "LabelC"] },
       } as unknown as TResponse;
-      const mappings = [createMapping({ elementId: "el-array", hubFieldType: "categorical" })];
+      const mappings = [createMapping({ elementId: "el-text", hubFieldType: "categorical" })];
       const result = transformResponseToFeedbackRecords(response, mockSurvey, mappings, mockTenantId);
       expect(result).toHaveLength(1);
-      expect(result[0].field_id).toBe("el-array");
+      expect(result[0].field_id).toBe("el-text");
       expect(result[0].value_text).toBe("LabelA, LabelB, LabelC");
     });
 
     test("joins an empty array to an empty string for non-choice elements", () => {
       const response = {
         ...mockResponse,
-        data: { "el-array": [] },
+        data: { "el-text": [] },
       } as unknown as TResponse;
-      const mappings = [createMapping({ elementId: "el-array", hubFieldType: "categorical" })];
+      const mappings = [createMapping({ elementId: "el-text", hubFieldType: "categorical" })];
       const result = transformResponseToFeedbackRecords(response, mockSurvey, mappings, mockTenantId);
       expect(result).toHaveLength(1);
       expect(result[0].value_text).toBe("");
+    });
+
+    // ENG-2064: the guard the reconciler's hold-back depends on. `resolveDeletions` keeps orphaned
+    // mappings when deleting them would leave a survey with none, on the stated grounds that they are
+    // inert — and they were not, because every branch here tolerated a missing element and published
+    // a record labelled "Untitled". `importHistoricalResponses` replays through the same loop, so a
+    // deleted question kept exporting on every historical import too.
+    test("publishes nothing for a mapping whose element is gone from the survey", () => {
+      const response = {
+        ...mockResponse,
+        data: { "el-deleted": "an answer submitted before the question was removed" },
+      } as unknown as TResponse;
+      const mappings = [createMapping({ elementId: "el-deleted", hubFieldType: "text" })];
+
+      expect(transformResponseToFeedbackRecords(response, mockSurvey, mappings, mockTenantId)).toEqual([]);
+    });
+
+    test("still publishes the surviving mappings alongside an orphaned one", () => {
+      // The guard must skip the orphan, not abandon the response.
+      const response = {
+        ...mockResponse,
+        data: { "el-deleted": "orphaned", "el-text": "kept" },
+      } as unknown as TResponse;
+      const mappings = [
+        createMapping({ elementId: "el-deleted", hubFieldType: "text" }),
+        createMapping({ elementId: "el-text", hubFieldType: "text" }),
+      ];
+
+      const result = transformResponseToFeedbackRecords(response, mockSurvey, mappings, mockTenantId);
+      expect(result).toHaveLength(1);
+      expect(result[0].field_id).toBe("el-text");
     });
 
     test("JSON-stringifies object value for unknown hubFieldType (default branch)", () => {
@@ -543,6 +603,25 @@ describe("transformResponseToFeedbackRecords", () => {
 
       expect(result).toEqual([]);
     });
+
+    // ENG-1939 (same class): a matrix element can reach this path with rows absent even though
+    // the schema requires it, since stored survey.blocks JSON is not re-validated. Must not throw.
+    test("does not crash when the matrix element has no rows array", () => {
+      const surveyNoRows = {
+        ...matrixSurvey,
+        blocks: [{ elements: [{ id: "el-matrix", type: "matrix", headline: { default: "Rate" } }] }],
+      } as unknown as TSurvey;
+      const response = {
+        id: "resp-matrix-no-rows",
+        createdAt: NOW,
+        data: { "el-matrix": { Speed: "Good" } },
+      } as unknown as TResponse;
+      const mappings = [createMapping({ elementId: "el-matrix", hubFieldType: "categorical" })];
+
+      const result = transformResponseToFeedbackRecords(response, surveyNoRows, mappings, mockTenantId);
+
+      expect(result).toEqual([]);
+    });
   });
 
   describe("ranking expansion", () => {
@@ -612,6 +691,25 @@ describe("transformResponseToFeedbackRecords", () => {
       const mappings = [createMapping({ elementId: "el-ranking", hubFieldType: "categorical" })];
 
       const result = transformResponseToFeedbackRecords(response, rankingSurvey, mappings, mockTenantId);
+
+      expect(result).toEqual([]);
+    });
+
+    // ENG-1939 (same class): a ranking element can reach this path with choices absent even though
+    // the schema requires it, since stored survey.blocks JSON is not re-validated. Must not throw.
+    test("does not crash when the ranking element has no choices array", () => {
+      const surveyNoChoices = {
+        ...rankingSurvey,
+        blocks: [{ elements: [{ id: "el-ranking", type: "ranking", headline: { default: "Rank" } }] }],
+      } as unknown as TSurvey;
+      const response = {
+        id: "resp-ranking-no-choices",
+        createdAt: NOW,
+        data: { "el-ranking": ["Reports", "Dashboards"] },
+      } as unknown as TResponse;
+      const mappings = [createMapping({ elementId: "el-ranking", hubFieldType: "categorical" })];
+
+      const result = transformResponseToFeedbackRecords(response, surveyNoChoices, mappings, mockTenantId);
 
       expect(result).toEqual([]);
     });

@@ -4,10 +4,16 @@ import { prisma } from "@formbricks/database";
 import { Prisma } from "@formbricks/database/prisma";
 import { logger } from "@formbricks/logger";
 import { ZId, ZOptionalNumber } from "@formbricks/types/common";
-import { DatabaseError, InvalidInputError, ResourceNotFoundError } from "@formbricks/types/errors";
+import {
+  DatabaseError,
+  InvalidInputError,
+  OperationNotAllowedError,
+  ResourceNotFoundError,
+} from "@formbricks/types/errors";
 import { TBaseFilters, ZSegmentFilters } from "@formbricks/types/segment";
 import { TSurveyBlock } from "@formbricks/types/surveys/blocks";
 import { TSurvey, TSurveyCreateInput, ZSurvey, ZSurveyCreateInput } from "@formbricks/types/surveys/types";
+import { scheduleFeedbackSourceReconciliation } from "@/lib/feedback-source/mapping-reconciliation";
 import {
   getOrganizationByWorkspaceId,
   subscribeOrganizationMembersToSurveyResponses,
@@ -56,6 +62,7 @@ export const selectSurvey = {
   autoComplete: true,
   publishOn: true,
   closeOn: true,
+  archivedAt: true,
   isVerifyEmailEnabled: true,
   isSingleResponsePerEmailEnabled: true,
   isBackButtonHidden: true,
@@ -233,6 +240,8 @@ export const getSurveys = reactCache(
       const surveysPrisma = await prisma.survey.findMany({
         where: {
           workspaceId,
+          // Archived surveys are hidden by default across the app.
+          archivedAt: null,
         },
         select: selectSurvey,
         orderBy: {
@@ -256,6 +265,11 @@ export const getSurveys = reactCache(
 export const getSurveyCount = reactCache(async (workspaceId: string): Promise<number> => {
   validateInputs([workspaceId, ZId]);
   try {
+    // Deliberately archive-inclusive. The sole consumer is the onboarding gate
+    // (redirect-if-onboarding-complete.ts): a workspace whose only survey is archived has already
+    // finished onboarding, so it must count > 0. Excluding archived here bounces such a user back
+    // into the "create your first survey" flow on every login — a full-screen page with no route to
+    // the Archived filter — while their archived survey counts down to permanent deletion.
     const surveyCount = await prisma.survey.count({
       where: {
         workspaceId,
@@ -291,6 +305,13 @@ export const updateSurveyInternal = async (
       throw new ResourceNotFoundError("Survey", surveyId);
     }
 
+    // Archived surveys are read-only. This covers every write path that flows through here
+    // (editor save, the summary status dropdown's server action, etc.) — not just the v3 API.
+    // Archive/restore themselves bypass this guard: they write archivedAt directly, not via update.
+    if (currentSurvey.archivedAt) {
+      throw new InvalidInputError("This survey is archived. Restore it before editing.");
+    }
+
     // ENG-1749: workspaceId and id are the survey's tenant anchors. Always resolve the workspace from
     // the existing survey (never the client payload), and strip workspaceId/id from the update below,
     // so an authorized editor cannot re-point their own survey into another workspace/organization.
@@ -305,6 +326,8 @@ export const updateSurveyInternal = async (
       followUps,
       workspaceId: _workspaceId,
       id: _id,
+      // archivedAt is owned exclusively by the archive/restore flows; never let a survey update touch it.
+      archivedAt: _archivedAt,
       ...surveyData
     } = updatedSurvey;
 
@@ -317,6 +340,20 @@ export const updateSurveyInternal = async (
     // referenced language belongs to this survey's workspace so a caller cannot attach another
     // tenant's language. Mirrors the create path guard (covers drafts too — runs before validation).
     await assertSurveyLanguagesBelongToWorkspace(currentSurvey.workspaceId, languages);
+
+    // ENG-1939/ENG-2115: validation may only be skipped for a draft-to-draft write, so BOTH sides of
+    // the transition are gated. The lenient draft schema (ZSurveyDraft) does not validate elements at
+    // all, so skipping validation on any other transition lets structurally invalid blocks reach the
+    // DB and crash downstream consumers that trust the schema:
+    //   - persisted status (ENG-1939): stops a caller pushing invalid blocks onto a live survey and
+    //     silently reverting it to draft, stopping it from collecting responses.
+    //   - payload status (ENG-2115): stops a caller publishing a draft that never passed ZSurvey.
+    //     `status` is not destructured out of surveyData below, so it flows straight to the write.
+    // Deliberately placed after the ENG-1749 tenant guards so a cross-workspace attempt still reports
+    // the authorization failure first, and before prisma.survey.update so nothing is persisted.
+    if (skipValidation && (currentSurvey.status !== "draft" || updatedSurvey.status !== "draft")) {
+      throw new OperationNotAllowedError("Only draft surveys can be updated without validation");
+    }
 
     if (!skipValidation) {
       checkForInvalidImagesInQuestions(questions);
@@ -585,6 +622,12 @@ export const updateSurveyInternal = async (
       data,
       select: selectSurvey,
     });
+
+    // ENG-2064: keep feedback-source mappings in sync with the survey's questions. Diff against the
+    // blocks that were actually persisted, not the caller's payload — a partial update that omits
+    // blocks leaves the stored questions untouched, and diffing its empty payload would delete every
+    // mapping. Best-effort: a failure logs inside the helper and never blocks the save.
+    await scheduleFeedbackSourceReconciliation(surveyId, currentSurvey.workspaceId, persistedSurvey.blocks);
 
     return await reconcilePersistedSurveySchedulingIfDue({
       logSource: "survey-update",

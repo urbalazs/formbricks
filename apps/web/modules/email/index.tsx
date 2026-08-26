@@ -25,6 +25,7 @@ import {
   DEBUG,
   IMPRINT_ADDRESS,
   IMPRINT_URL,
+  IS_SMTP_CONFIGURED,
   MAIL_FROM,
   MAIL_FROM_NAME,
   PRIVACY_URL,
@@ -52,7 +53,7 @@ import { getTranslate } from "@/lingodotdev/server";
 import { TVerificationRequestPurpose, buildVerificationLinks } from "@/modules/auth/lib/verification-links";
 import { resolveStorageUrl } from "@/modules/storage/utils";
 
-export const IS_SMTP_CONFIGURED = Boolean(SMTP_HOST && SMTP_PORT);
+export { IS_SMTP_CONFIGURED };
 
 const legalProps: TEmailTemplateLegalProps = {
   privacyUrl: PRIVACY_URL || undefined,
@@ -63,10 +64,13 @@ const legalProps: TEmailTemplateLegalProps = {
 
 interface SendEmailDataProps {
   to: string;
+  from?: string;
   replyTo?: string;
   subject: string;
   text?: string;
   html: string;
+  /** Optional RFC 5322 Message-ID; nodemailer emits it as the `Message-ID` header. */
+  messageId?: string;
 }
 
 export type TResponseFinishedEmailSurvey = TElementResponseMappingSurvey &
@@ -101,7 +105,11 @@ export const sendEmail = async (emailData: SendEmailDataProps): Promise<boolean>
     const emailDefaults = {
       from: `${MAIL_FROM_NAME ?? "Formbricks"} <${MAIL_FROM ?? "noreply@formbricks.com"}>`,
     };
-    await transporter.sendMail({ ...emailDefaults, ...emailData });
+    await transporter.sendMail({
+      ...emailDefaults,
+      ...emailData,
+      from: emailData.from ?? emailDefaults.from,
+    });
 
     return true;
   } catch (error) {
@@ -117,7 +125,7 @@ export const sendVerificationNewEmail = async (
 ): Promise<boolean> => {
   try {
     const t = await getTranslate(locale);
-    const token = createEmailChangeToken(id, email);
+    const token = await createEmailChangeToken(id, email);
     const verifyLink = `${WEBAPP_URL}/verify-email-change?token=${encodeURIComponent(token)}`;
 
     const html = await renderNewEmailVerification({ verifyLink, t, ...legalProps });
@@ -324,6 +332,13 @@ export const sendResponseFinishedEmail = async (
     return element;
   });
 
+  // The whitelabel logo is stored as a relative `/storage/...` path, which an email client cannot
+  // resolve — it has no origin to resolve against, so the `<img>` renders broken. Resolve it to an
+  // absolute URL here, exactly like every other email sender does.
+  const logoUrl = organization.whitelabel?.logoUrl
+    ? resolveStorageUrl(organization.whitelabel.logoUrl)
+    : undefined;
+
   const html = await renderResponseFinishedEmail({
     survey,
     responseCount,
@@ -332,20 +347,18 @@ export const sendResponseFinishedEmail = async (
     workspaceId,
     organization,
     elements: elementsWithResolvedUrls,
+    logoUrl,
     t,
     ...legalProps,
   });
 
   await sendEmail({
     to: email,
-    subject: personEmail
-      ? t("emails.response_finished_email_subject_with_email", {
-          personEmail,
-          surveyName: survey.name,
-        })
-      : t("emails.response_finished_email_subject", {
-          surveyName: survey.name,
-        }),
+    // Never put the respondent's email address in the subject — it's PII that ends up in
+    // notification previews and mailbox lists; replying still reaches them via replyTo.
+    subject: t("emails.response_finished_email_subject", {
+      surveyName: survey.name,
+    }),
     replyTo: personEmail?.toString() ?? MAIL_FROM,
     html,
   });

@@ -1,12 +1,15 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import { createCacheKey } from "@formbricks/cache";
 import FormbricksHub from "@formbricks/hub";
+import { logger } from "@formbricks/logger";
 import {
+  countFeedbackRecords,
   createFeedbackRecord,
   createFeedbackRecordsBatch,
   createTaxonomyRun,
   deleteFeedbackRecord,
   deleteHubTenantData,
+  findSimilarFeedbackRecords,
   getActiveTaxonomyTree,
   getFeedbackRecordTenant,
   getTaxonomyRun,
@@ -15,6 +18,7 @@ import {
   listTaxonomyFields,
   listTaxonomyNodeRecords,
   listTaxonomyRuns,
+  purgeHubFeedbackRecords,
   removeTaxonomyNode,
   renameTaxonomyNode,
   retrieveFeedbackRecord,
@@ -24,7 +28,7 @@ import {
 import type { FeedbackRecordCreateParams } from "./types";
 
 vi.mock("@formbricks/logger", () => ({
-  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn() },
+  logger: { warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() },
 }));
 
 vi.mock("@formbricks/hub", () => ({
@@ -42,6 +46,7 @@ vi.mock("@formbricks/hub", () => ({
 
 vi.mock("./hub-client", () => ({
   getHubClient: vi.fn(),
+  assertRepeatedArrayParams: vi.fn(),
 }));
 
 vi.mock("@/lib/cache", () => ({
@@ -50,7 +55,7 @@ vi.mock("@/lib/cache", () => ({
   },
 }));
 
-const { getHubClient } = await import("./hub-client");
+const { getHubClient, assertRepeatedArrayParams } = await import("./hub-client");
 const { cache } = await import("@/lib/cache");
 
 const sampleInput: FeedbackRecordCreateParams = {
@@ -178,6 +183,32 @@ describe("hub service", () => {
       expect(result.data).toBeNull();
       expect(result.error).toMatchObject({ status: 0, message: "Network error" });
     });
+
+    test("verifies the client before sending the request", async () => {
+      const client = { feedbackRecords: { list: vi.fn().mockResolvedValue({ data: [], limit: 50 }) } };
+      vi.mocked(getHubClient).mockReturnValue(client as any);
+
+      await listFeedbackRecords({ tenant_id: "env-1" });
+
+      expect(assertRepeatedArrayParams).toHaveBeenCalledWith(client);
+    });
+
+    // Confirms the probe now surfaces exactly like any other Hub failure — the fix for it previously
+    // running inside getHubClient(), outside every caller's own try, where it depended on the outer API
+    // wrapper to turn an uncaught exception into a controlled response.
+    test("returns a relayed error rather than throwing when the probe fails", async () => {
+      const list = vi.fn();
+      vi.mocked(getHubClient).mockReturnValue({ feedbackRecords: { list } } as any);
+      vi.mocked(assertRepeatedArrayParams).mockImplementation(() => {
+        throw new Error("@formbricks/hub no longer routes query serialization through stringifyQuery");
+      });
+
+      const result = await listFeedbackRecords({ tenant_id: "env-1" });
+
+      expect(result.data).toBeNull();
+      expect(result.error).toMatchObject({ status: 0 });
+      expect(list).not.toHaveBeenCalled();
+    });
   });
 
   describe("retrieveFeedbackRecord", () => {
@@ -205,6 +236,100 @@ describe("hub service", () => {
       const result = await retrieveFeedbackRecord("rec-1");
       expect(result.data).toBeNull();
       expect(result.error).toMatchObject({ message: "Not found" });
+    });
+  });
+
+  /**
+   * `assertRepeatedArrayParams` is scoped to the two operations that send array-typed filters. It used to
+   * gate `getHubClient()` itself, which meant every consumer — a single record fetch here, taxonomy
+   * elsewhere, create/update/delete — paid for a probe that only list/count depend on, and a real SDK
+   * regression would break all of them at once. These assert the other side of the scoping fix: an
+   * unrelated call neither triggers the probe nor is affected when it would fail.
+   */
+  describe("assertRepeatedArrayParams scope", () => {
+    test("retrieveFeedbackRecord does not verify array-param support", async () => {
+      vi.mocked(getHubClient).mockReturnValue({
+        feedbackRecords: { retrieve: vi.fn().mockResolvedValue({ id: "rec-1" }) },
+      } as any);
+
+      await retrieveFeedbackRecord("rec-1");
+
+      expect(assertRepeatedArrayParams).not.toHaveBeenCalled();
+    });
+
+    test("listTaxonomyFields succeeds even when array-param support is broken", async () => {
+      const listFields = vi.fn().mockResolvedValue({ fields: [] });
+      vi.mocked(getHubClient).mockReturnValue({ taxonomy: { listFields } } as any);
+      vi.mocked(assertRepeatedArrayParams).mockImplementation(() => {
+        throw new Error("would fail list/count, but taxonomy never calls this");
+      });
+
+      const result = await listTaxonomyFields("tenant-1");
+
+      expect(assertRepeatedArrayParams).not.toHaveBeenCalled();
+      expect(listFields).toHaveBeenCalledWith({ tenant_id: "tenant-1" });
+      expect(result.error).toBeNull();
+    });
+  });
+
+  describe("countFeedbackRecords", () => {
+    test("returns config error when getHubClient returns null", async () => {
+      vi.mocked(getHubClient).mockReturnValue(null);
+
+      const result = await countFeedbackRecords({ tenant_id: "env-1" });
+
+      expect(result.data).toBeNull();
+      expect(result.error?.message).toContain("HUB_API_KEY");
+    });
+
+    test("passes the filters through and returns the count", async () => {
+      const count = vi.fn().mockResolvedValue({ count: 42 });
+      vi.mocked(getHubClient).mockReturnValue({ feedbackRecords: { count } } as any);
+
+      const result = await countFeedbackRecords({ tenant_id: "env-1", user_id: ["user-1"] });
+
+      expect(count).toHaveBeenCalledWith({ tenant_id: "env-1", user_id: ["user-1"] });
+      expect(result.data).toEqual({ count: 42 });
+      expect(result.error).toBeNull();
+    });
+
+    test("returns a relayable error when the Hub rejects the filters", async () => {
+      const apiError = Object.assign(new (FormbricksHub.APIError as any)("400 Bad Request", 400), {
+        error: { code: "validation", detail: "since must be a valid timestamp" },
+      });
+      vi.mocked(getHubClient).mockReturnValue({
+        feedbackRecords: { count: vi.fn().mockRejectedValue(apiError) },
+      } as any);
+
+      const result = await countFeedbackRecords({ tenant_id: "env-1", since: "not-a-date" });
+
+      expect(result.error).toMatchObject({
+        status: 400,
+        problemDetail: "since must be a valid timestamp",
+      });
+    });
+
+    test("verifies the client before sending the request", async () => {
+      const client = { feedbackRecords: { count: vi.fn().mockResolvedValue({ count: 0 }) } };
+      vi.mocked(getHubClient).mockReturnValue(client as any);
+
+      await countFeedbackRecords({ tenant_id: "env-1" });
+
+      expect(assertRepeatedArrayParams).toHaveBeenCalledWith(client);
+    });
+
+    test("returns a relayed error rather than throwing when the probe fails", async () => {
+      const count = vi.fn();
+      vi.mocked(getHubClient).mockReturnValue({ feedbackRecords: { count } } as any);
+      vi.mocked(assertRepeatedArrayParams).mockImplementation(() => {
+        throw new Error("@formbricks/hub no longer routes query serialization through stringifyQuery");
+      });
+
+      const result = await countFeedbackRecords({ tenant_id: "env-1" });
+
+      expect(result.data).toBeNull();
+      expect(result.error).toMatchObject({ status: 0 });
+      expect(count).not.toHaveBeenCalled();
     });
   });
 
@@ -289,6 +414,78 @@ describe("hub service", () => {
       expect(result.data).toBeNull();
       expect(result.error).toMatchObject({ status: 0, message: "Network error" });
     });
+
+    // Callers map the Hub's problem members to their own response (an actionable message for the 503,
+    // relayed field errors on a 4xx). A hand-built error object would drop them and degrade to generic text.
+    test("preserves the Hub's RFC 9457 problem members", async () => {
+      const apiError = Object.assign(new (FormbricksHub.APIError as any)("503 unavailable", 503), {
+        error: { code: "service_unavailable", detail: "embeddings are not configured" },
+      });
+      vi.mocked(getHubClient).mockReturnValue({
+        feedbackRecords: { search: { performSemanticSearch: vi.fn().mockRejectedValue(apiError) } },
+      } as any);
+
+      const result = await semanticSearchFeedbackRecords({ tenant_id: "env-1", query: "q" });
+
+      expect(result.error).toMatchObject({
+        status: 503,
+        code: "service_unavailable",
+        problemDetail: "embeddings are not configured",
+      });
+    });
+  });
+
+  describe("findSimilarFeedbackRecords", () => {
+    test("returns config error when getHubClient returns null", async () => {
+      vi.mocked(getHubClient).mockReturnValue(null);
+
+      const result = await findSimilarFeedbackRecords("rec-1");
+
+      expect(result.data).toBeNull();
+      expect(result.error?.message).toContain("HUB_API_KEY");
+    });
+
+    test("passes the record id and params through and returns the matches", async () => {
+      const response = {
+        data: [
+          {
+            feedback_record_id: "018e1234-5678-9abc-def0-123456789abc",
+            score: 0.77,
+            field_label: "What can we improve?",
+            value_text: "payment step was unclear",
+          },
+        ],
+        limit: 10,
+      };
+      const retrieveSimilar = vi.fn().mockResolvedValue(response);
+      vi.mocked(getHubClient).mockReturnValue({ feedbackRecords: { retrieveSimilar } } as any);
+
+      const result = await findSimilarFeedbackRecords("rec-1", { limit: 10, min_score: 0.5 });
+
+      expect(retrieveSimilar).toHaveBeenCalledWith("rec-1", { limit: 10, min_score: 0.5 });
+      expect(result.data).toEqual(response);
+      expect(result.error).toBeNull();
+    });
+
+    // The 404 is load-bearing: callers translate it into "no embedding yet" once they know the record
+    // exists, so it must arrive with its status intact rather than as a generic failure. It is also an
+    // expected state, so it must not be logged as a fault — a warning per call would carry a stack trace.
+    test("surfaces a 404 with its status, logged as debug rather than a warning", async () => {
+      const apiError = new (FormbricksHub.APIError as any)("embedding not found", 404);
+      vi.mocked(getHubClient).mockReturnValue({
+        feedbackRecords: { retrieveSimilar: vi.fn().mockRejectedValue(apiError) },
+      } as any);
+      // This file has no shared reset, so clear the shared logger spies before asserting on them.
+      vi.mocked(logger.warn).mockClear();
+      vi.mocked(logger.debug).mockClear();
+
+      const result = await findSimilarFeedbackRecords("rec-1");
+
+      expect(result.data).toBeNull();
+      expect(result.error).toMatchObject({ status: 404 });
+      expect(logger.debug).toHaveBeenCalled();
+      expect(logger.warn).not.toHaveBeenCalled();
+    });
   });
 
   describe("updateFeedbackRecord", () => {
@@ -364,6 +561,25 @@ describe("hub service", () => {
       expect(result.data).toBeNull();
       expect(result.error).toMatchObject({ status: 0, message: "network" });
     });
+
+    // A tenant purge in progress is reported as a 409 with a detail the caller relays as retryable; that
+    // detail only survives if the error goes through the shared problem-parsing helper.
+    test("preserves the Hub's RFC 9457 problem members on a conflict", async () => {
+      const apiError = Object.assign(new (FormbricksHub.APIError as any)("409 Conflict", 409), {
+        error: { code: "tenant_write_conflict", detail: "tenant data deletion in progress" },
+      });
+      vi.mocked(getHubClient).mockReturnValue({
+        feedbackRecords: { delete: vi.fn().mockRejectedValue(apiError) },
+      } as any);
+
+      const result = await deleteFeedbackRecord("rec-1");
+
+      expect(result.error).toMatchObject({
+        status: 409,
+        code: "tenant_write_conflict",
+        problemDetail: "tenant data deletion in progress",
+      });
+    });
   });
 
   describe("deleteHubTenantData", () => {
@@ -402,6 +618,56 @@ describe("hub service", () => {
       } as any);
 
       const result = await deleteHubTenantData("tenant-1");
+
+      expect(result.data).toBeNull();
+      expect(result.error).toMatchObject({ status: 0, message: "network" });
+    });
+  });
+
+  describe("purgeHubFeedbackRecords", () => {
+    test("returns config error when getHubClient returns null", async () => {
+      vi.mocked(getHubClient).mockReturnValue(null);
+
+      const result = await purgeHubFeedbackRecords("tenant-1");
+
+      expect(result.data).toBeNull();
+      expect(result.error?.message).toContain("HUB_API_KEY");
+    });
+
+    // Targets the tenant sub-resource, not the feedback-records collection: the collection prefix is
+    // publicly routed by the gateway, and this must stay off it. Distinct from the offboarding purge
+    // at /v1/tenants/{id}/data, which also destroys taxonomy, webhooks and settings.
+    test("targets the tenant's feedback-records sub-resource", async () => {
+      const deleteSpy = vi.fn().mockResolvedValue({
+        tenant_id: "tenant-1",
+        status: "accepted",
+        message: "Feedback records purge accepted for tenant-1",
+      });
+      vi.mocked(getHubClient).mockReturnValue({ delete: deleteSpy } as any);
+
+      const result = await purgeHubFeedbackRecords("tenant-1");
+
+      expect(deleteSpy).toHaveBeenCalledWith("/v1/tenants/tenant-1/feedback-records");
+      expect(result.error).toBeNull();
+      expect(result.data).toEqual({ tenantId: "tenant-1", status: "accepted" });
+    });
+
+    test("escapes the tenant id in the path", async () => {
+      const deleteSpy = vi.fn().mockResolvedValue({ tenant_id: "a/b", status: "accepted" });
+      vi.mocked(getHubClient).mockReturnValue({ delete: deleteSpy } as any);
+
+      await purgeHubFeedbackRecords("a/b");
+
+      // An unescaped slash would address a different route entirely.
+      expect(deleteSpy).toHaveBeenCalledWith("/v1/tenants/a%2Fb/feedback-records");
+    });
+
+    test("returns error when the purge cannot be scheduled", async () => {
+      vi.mocked(getHubClient).mockReturnValue({
+        delete: vi.fn().mockRejectedValue(new Error("network")),
+      } as any);
+
+      const result = await purgeHubFeedbackRecords("tenant-1");
 
       expect(result.data).toBeNull();
       expect(result.error).toMatchObject({ status: 0, message: "network" });

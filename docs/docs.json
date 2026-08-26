@@ -51,7 +51,12 @@
         "groups": [
           {
             "group": "Overview",
-            "pages": ["platform/introduction", "platform/what-is-formbricks", "platform/open-source"]
+            "pages": [
+              "platform/introduction",
+              "platform/what-is-formbricks",
+              "platform/open-source",
+              "platform/accessibility"
+            ]
           },
           {
             "group": "Platform Features",
@@ -85,11 +90,6 @@
                   "platform/features/user-management/invite-members",
                   "platform/features/user-management/two-factor-auth"
                 ]
-              },
-              {
-                "group": "MCP",
-                "icon": "robot",
-                "pages": ["platform/mcp/overview", "platform/mcp/setup"]
               },
               "platform/features/styling-theme",
               "platform/features/email-customization"
@@ -169,9 +169,11 @@
                     "icon": "wrench",
                     "pages": [
                       "surveys/website-app-surveys/actions",
-                      "surveys/website-app-surveys/advanced-targeting",
                       "surveys/website-app-surveys/user-identification",
+                      "surveys/website-app-surveys/attribute-based-targeting",
                       "surveys/website-app-surveys/recontact",
+                      "surveys/website-app-surveys/cooldown-period",
+                      "surveys/website-app-surveys/survey-display-logic",
                       "surveys/website-app-surveys/show-survey-to-percent-of-users"
                     ]
                   }
@@ -195,7 +197,8 @@
                   "surveys/question-type/select-multiple",
                   "surveys/question-type/select-picture",
                   "surveys/question-type/select-single",
-                  "surveys/question-type/statement-cta"
+                  "surveys/question-type/statement-cta",
+                  "surveys/question-type/thank-you-card"
                 ]
               }
             ]
@@ -215,11 +218,12 @@
               "surveys/best-practices/pmf-survey",
               "surveys/best-practices/quiz-time",
               "surveys/best-practices/improve-trial-cr",
-              "surveys/best-practices/research-panel"
+              "surveys/best-practices/research-panel",
+              "surveys/best-practices/google-reviews"
             ]
           }
         ],
-        "tab": "Surveys"
+        "tab": "Surveys (Ask)"
       },
       {
         "groups": [
@@ -233,6 +237,7 @@
               "unify-feedback/feedback-datasets",
               "unify-feedback/feedback-sources",
               "unify-feedback/feedback-records",
+              "unify-feedback/enrichment",
               "unify-feedback/dashboards-charts",
               "unify-feedback/topics-subtopics"
             ]
@@ -258,7 +263,20 @@
             "pages": ["unify-feedback/formbricks-hub"]
           }
         ],
-        "tab": "Unify Feedback"
+        "tab": "Unify Feedback (Analyze)"
+      },
+      {
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["workflows/overview"]
+          },
+          {
+            "group": "Workflow Features",
+            "pages": ["workflows/build", "workflows/manage-and-monitor"]
+          }
+        ],
+        "tab": "Workflows (Act)"
       },
       {
         "groups": [
@@ -281,6 +299,7 @@
             "pages": [
               "self-hosting/configuration/custom-ssl",
               "self-hosting/configuration/environment-variables",
+              "self-hosting/configuration/job-runner",
               "self-hosting/configuration/smtp",
               "self-hosting/configuration/file-uploads",
               "self-hosting/configuration/domain-configuration",
@@ -317,6 +336,7 @@
             "group": "Advanced",
             "pages": [
               "self-hosting/advanced/migration",
+              "self-hosting/advanced/migrating-surveys",
               "self-hosting/advanced/license",
               "self-hosting/advanced/license-activation",
               {
@@ -332,7 +352,8 @@
                   "self-hosting/advanced/enterprise-features/audit-logging",
                   "self-hosting/advanced/enterprise-features/unify-feedback",
                   "self-hosting/advanced/enterprise-features/dashboards",
-                  "self-hosting/advanced/enterprise-features/ai-features"
+                  "self-hosting/advanced/enterprise-features/ai-features",
+                  "self-hosting/advanced/enterprise-features/workflows"
                 ]
               },
               "self-hosting/advanced/rate-limiting"
@@ -427,6 +448,15 @@
           }
         ],
         "tab": "Development"
+      },
+      {
+        "groups": [
+          {
+            "group": "MCP",
+            "pages": ["platform/mcp/overview", "platform/mcp/setup"]
+          }
+        ],
+        "tab": "MCP"
       },
       {
         "groups": [
@@ -850,12 +880,16 @@
       "source": "/docs/app-surveys/actions"
     },
     {
-      "destination": "/docs/surveys/website-app-surveys/advanced-targeting",
+      "destination": "/docs/surveys/website-app-surveys/attribute-based-targeting",
       "source": "/docs/xm-and-surveys/surveys/website-app-surveys/advanced-targeting"
     },
     {
-      "destination": "/docs/surveys/website-app-surveys/advanced-targeting",
+      "destination": "/docs/surveys/website-app-surveys/attribute-based-targeting",
       "source": "/docs/app-surveys/advanced-targeting"
+    },
+    {
+      "destination": "/docs/surveys/website-app-surveys/attribute-based-targeting",
+      "source": "/docs/surveys/website-app-surveys/advanced-targeting"
     },
     {
       "destination": "/docs/surveys/website-app-surveys/user-identification",
@@ -1172,6 +1206,10 @@
     {
       "destination": "/docs/platform/features/email-customization",
       "source": "/docs/core-features/global/email-customization"
+    },
+    {
+      "destination": "/docs/self-hosting/configuration/job-runner",
+      "source": "/docs/self-hosting/configuration/workflow-runner"
     },
     {
       "destination": "/docs/self-hosting/setup/one-click",

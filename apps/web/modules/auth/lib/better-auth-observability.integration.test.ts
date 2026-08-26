@@ -1,10 +1,9 @@
+import { createLocalAccountIssuer } from "@better-auth/core/db";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { prisma } from "@formbricks/database";
 import { resetDb } from "@/integration/reset-db";
 import { hashSecret } from "@/lib/crypto";
-// eslint-disable-next-line import/first
 import { auth } from "@/modules/auth/lib/auth";
-// eslint-disable-next-line import/first -- must import after the vi.mock above is registered
 import * as auditHandler from "@/modules/ee/audit-logs/lib/handler";
 
 // Capture audit emission without running the real background audit logging (DB writes via setImmediate).
@@ -48,6 +47,9 @@ describe("Observability — signedIn audit on session creation (real Postgres)",
         provider: "credential",
         providerAccountId: user.id,
         password: user.password!,
+        // Represents an already-migrated existing account (ENG-2343); sign-in's findCredentialAccount
+        // filters on this.
+        issuer: createLocalAccountIssuer("credential"),
       },
     });
 
@@ -87,6 +89,9 @@ describe("Observability — failed-login audit on a rejected sign-in (real Postg
         provider: "credential",
         providerAccountId: user.id,
         password: user.password!,
+        // Represents an already-migrated existing account (ENG-2343); sign-in's findCredentialAccount
+        // filters on this.
+        issuer: createLocalAccountIssuer("credential"),
       },
     });
 

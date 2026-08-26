@@ -22,9 +22,11 @@ type TV3SurveyListItemBase = Pick<
   | "type"
   | "status"
   | "publishOn"
+  | "archivedAt"
   | "createdAt"
   | "updatedAt"
   | "responseCount"
+  | "completedResponseCount"
 >;
 
 export type TV3SurveyListItem = TV3SurveyListItemBase & {
@@ -80,9 +82,11 @@ export function serializeV3SurveyListItem(survey: TSurveyListRecord): TV3SurveyL
     type: survey.type,
     status: survey.status,
     publishOn: survey.publishOn,
+    archivedAt: survey.archivedAt,
     createdAt: survey.createdAt,
     updatedAt: survey.updatedAt,
     responseCount: survey.responseCount,
+    completedResponseCount: survey.completedResponseCount,
     creator: serializeV3SurveyCreator(survey.creator),
   };
 }
@@ -222,6 +226,7 @@ export function serializeV3SurveyResource(survey: TInternalSurvey, options?: { l
     name: survey.name,
     type: survey.type,
     status: survey.status,
+    archivedAt: survey.archivedAt ? toIsoString(survey.archivedAt) : null,
     metadata: serializeMetadata(survey.metadata, defaultLanguage, languageCodes, {
       fallbackMissingTranslations: requestedLanguages.length > 0,
     }),

@@ -3,9 +3,9 @@
 import { ChevronDownIcon, PlusCircleIcon, PlusIcon } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
+import type { TAIUnavailableReason } from "@/lib/ai/service";
 import { CreateChartDialog } from "@/modules/ee/analysis/charts/components/create-chart-dialog";
 import { CreateChartWithAIDialog } from "@/modules/ee/analysis/charts/components/create-chart-with-ai-dialog";
-import type { TAIUnavailableReason } from "@/modules/ee/analysis/charts/lib/ai-availability";
 import type { AnalyticsResponse } from "@/modules/ee/analysis/types/analysis";
 import { AiIcon } from "@/modules/ui/components/ai";
 import { Button, type ButtonProps } from "@/modules/ui/components/button";

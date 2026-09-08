@@ -1,18 +1,14 @@
 "use client";
 
-import Link from "next/link";
 import { type KeyboardEvent, type SyntheticEvent, useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "react-hot-toast";
 import { useTranslation } from "react-i18next";
 import { useWorkspace } from "@/app/(app)/workspaces/[workspaceId]/context/workspace-context";
+import type { TAIUnavailableReason } from "@/lib/ai/service";
 import { getFormattedErrorMessage } from "@/lib/utils/helper";
+import { AIUnavailableAlert } from "@/modules/ai/components/ai-unavailable-alert";
 import { generateAIChartAction } from "@/modules/ee/analysis/charts/actions";
 import { NoFeedbackDirectoryAlert } from "@/modules/ee/analysis/charts/components/no-feedback-directory-alert";
-import {
-  type TAIUnavailableActionType,
-  type TAIUnavailableReason,
-  getAIUnavailableAction,
-} from "@/modules/ee/analysis/charts/lib/ai-availability";
 import { getTranslatedAIChartError } from "@/modules/ee/analysis/charts/lib/ai-chart-errors";
 import {
   AI_CHART_PROMPT_MAX_LENGTH,
@@ -21,7 +17,6 @@ import {
 } from "@/modules/ee/analysis/charts/lib/ai-chart-prompts";
 import type { AnalyticsResponse } from "@/modules/ee/analysis/types/analysis";
 import { AiIcon, AiStatusLine } from "@/modules/ui/components/ai";
-import { Alert, AlertButton, AlertDescription, AlertTitle } from "@/modules/ui/components/alert";
 import { Button } from "@/modules/ui/components/button";
 import { ConfirmationModal } from "@/modules/ui/components/confirmation-modal";
 import {
@@ -84,32 +79,6 @@ export function CreateChartWithAIDialog({
   useEffect(() => {
     if (isGenerating) stopButtonRef.current?.focus();
   }, [isGenerating]);
-
-  const translateAIUnavailableMessage = (reason: TAIUnavailableReason | undefined): string => {
-    switch (reason) {
-      case "not_in_plan":
-        return t("workspace.analysis.charts.ai_not_in_plan");
-      case "not_enabled":
-        return t("workspace.analysis.charts.ai_not_enabled");
-      case "instance_not_configured":
-        return t("workspace.analysis.charts.ai_instance_not_configured");
-      default:
-        return t("workspace.analysis.charts.ai_not_available");
-    }
-  };
-
-  const translateAIUnavailableAction = (actionType: TAIUnavailableActionType): string => {
-    switch (actionType) {
-      case "enable_ai":
-        return t("workspace.analysis.charts.ai_enable_in_settings");
-      case "upgrade_plan":
-        return t("workspace.analysis.charts.ai_upgrade_plan");
-    }
-  };
-
-  const aiUnavailableAction = workspace?.organizationId
-    ? getAIUnavailableAction(aiUnavailableReason, workspace.organizationId)
-    : undefined;
 
   const closeAndReset = () => {
     runIdRef.current += 1;
@@ -213,17 +182,13 @@ export function CreateChartWithAIDialog({
               )}
 
               {!isAIAvailable && (
-                <Alert variant="info" role="status">
-                  <AlertTitle>{t("workspace.analysis.charts.ai_chart_generation")}</AlertTitle>
-                  <AlertDescription>{translateAIUnavailableMessage(aiUnavailableReason)}</AlertDescription>
-                  {aiUnavailableAction && (
-                    <AlertButton asChild>
-                      <Link href={aiUnavailableAction.href}>
-                        {translateAIUnavailableAction(aiUnavailableAction.type)}
-                      </Link>
-                    </AlertButton>
-                  )}
-                </Alert>
+                // The entry point is hidden when AI is off, so this is a fallback rather than the
+                // usual path — it says the same thing every other AI gate says.
+                <AIUnavailableAlert
+                  title={t("workspace.analysis.charts.ai_chart_generation")}
+                  reason={aiUnavailableReason}
+                  feature="ai_chart_generation"
+                />
               )}
 
               <div className="space-y-2">
